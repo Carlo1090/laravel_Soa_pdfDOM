@@ -2,11 +2,13 @@
 
 namespace App\Http\Controllers;
 
+use App\Mail\TransactionOfAccount;
 use App\Models\Transaction;
 use App\Models\Account;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 
 class TransactionController extends Controller
 {
@@ -31,59 +33,61 @@ class TransactionController extends Controller
     /**
      * Store a newly created transaction in storage.
      */
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'account_id' => 'required|exists:accounts,id',
-            'transaction_number' => 'required|string|unique:transactions',
-            'type' => 'required|in:disbursement,payment',
-            'amount' => 'required|numeric|min:0',
-            'transaction_date' => 'required|date',
-            'payment_method' => 'nullable|string',
-            'reference_number' => 'nullable|string',
-            'notes' => 'nullable|string',
+   public function store(Request $request)
+{
+    $validated = $request->validate([
+        'account_id' => 'required|exists:accounts,id',
+        'transaction_number' => 'required|string|unique:transactions',
+        'type' => 'required|in:disbursement,payment',
+        'amount' => 'required|numeric|min:0',
+        'transaction_date' => 'required|date',
+        'payment_method' => 'nullable|string',
+        'reference_number' => 'nullable|string',
+        'notes' => 'nullable|string',
+        'send_email' => 'nullable|boolean',
+    ]);
+
+    $transaction = DB::transaction(function () use ($validated, $request) {
+
+        $account = Account::findOrFail($validated['account_id']);
+
+        $newBalance = $validated['type'] === 'disbursement'
+            ? $account->balance + $validated['amount']
+            : $account->balance - $validated['amount'];
+
+        $transaction = Transaction::create([
+            'account_id' => $validated['account_id'],
+            'transaction_number' => $validated['transaction_number'],
+            'type' => $validated['type'],
+            'amount' => $validated['amount'],
+            'transaction_date' => $validated['transaction_date'],
+            'balance_after' => $newBalance,
+            'payment_method' => $validated['payment_method'] ?? null,
+            'reference_number' => $validated['reference_number'] ?? null,
+            'notes' => $validated['notes'] ?? null,
+            'processed_by' => Auth::id(),
         ]);
 
-        DB::transaction(function () use ($validated) {
-            $account = Account::findOrFail($validated['account_id']);
-            
-            // Calculate new balance based on transaction type
-            if ($validated['type'] === 'disbursement') {
-                // For disbursement, this adds to what customer owes (shouldn't normally happen after account creation)
-                $newBalance = $account->balance + $validated['amount'];
-            } else {
-                // For payment, this reduces what customer owes
-                $newBalance = $account->balance - $validated['amount'];
-            }
+        $account->balance = $newBalance;
+        if ($newBalance <= 0) {
+            $account->status = 'paid';
+        }
+        $account->save();
 
-            // Create the transaction
-            Transaction::create([
-                'account_id' => $validated['account_id'],
-                'transaction_number' => $validated['transaction_number'],
-                'type' => $validated['type'],
-                'amount' => $validated['amount'],
-                'transaction_date' => $validated['transaction_date'],
-                'balance_after' => $newBalance,
-                'payment_method' => $validated['payment_method'] ?? null,
-                'reference_number' => $validated['reference_number'] ?? null,
-                'notes' => $validated['notes'] ?? null,
-                'processed_by' => Auth::id(),
-            ]);
+        return $transaction;
+    });
 
-            // Update account balance
-            $account->balance = $newBalance;
-            
-            // Update account status if fully paid
-            if ($newBalance <= 0) {
-                $account->status = 'paid';
-            }
-            
-            $account->save();
-        });
 
-        return redirect()->route('transactions.index')
-            ->with('success', 'Transaction created successfully.');
+    if ($request->has('send_email')) {
+        $transaction->load('account.customer');
+
+        Mail::to($transaction->account->customer->email)
+            ->queue(new TransactionOfAccount($transaction));
     }
+
+    return redirect()->route('transactions.index')
+        ->with('success', 'Transaction created successfully.');
+}
 
     /**
      * Display the specified transaction.
@@ -127,26 +131,41 @@ class TransactionController extends Controller
     {
         DB::transaction(function () use ($transaction) {
             $account = $transaction->account;
-            
-            // Reverse the transaction effect on account balance
+
             if ($transaction->type === 'disbursement') {
                 $account->balance -= $transaction->amount;
             } else {
                 $account->balance += $transaction->amount;
             }
-            
-            // Update account status
+
             if ($account->balance > 0 && $account->status === 'paid') {
                 $account->status = 'active';
             }
-            
+
             $account->save();
-            
-            // Delete the transaction
             $transaction->delete();
         });
 
         return redirect()->route('transactions.index')
             ->with('success', 'Transaction deleted successfully.');
+    }
+
+    /**
+     * Send transaction email manually
+     */
+    public function sendTransaction(Request $request)
+    {
+        $request->validate([
+            'transaction_id' => 'required|exists:transactions,id',
+        ]);
+
+        $transaction = Transaction::with('account.customer')
+            ->findOrFail($request->transaction_id);
+
+        Mail::to($transaction->account->customer->email)
+            ->send(new TransactionOfAccount($transaction->account));
+
+        return redirect()->back()
+            ->with('success', 'Transaction email sent successfully.');
     }
 }

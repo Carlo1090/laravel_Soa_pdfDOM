@@ -49,8 +49,13 @@ Route::middleware('auth')->group(function () {
     // Transaction routes
     Route::resource('transactions', TransactionController::class);
 
+    Route::post('/transactions/send-email', [TransactionController::class, 'sendTransaction'])
+    ->name('transactions.sendEmail');
+
+
     // SOA routes
     Route::get('/soa', [ManagementController::class, 'soaGeneration'])->name('soa.index');
+    Route::get('/soa/{account}', [ManagementController::class, 'generateSOA'])->name('soa.generate');
     Route::get('/soa/generate-all', [ManagementController::class, 'generateAllSOAs'])->name('soa.generateAll');
 });
 

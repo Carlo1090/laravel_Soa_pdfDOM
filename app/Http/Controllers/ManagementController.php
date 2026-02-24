@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\Account;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Mail;
-
+use Barryvdh\DomPDF\Facade\Pdf;
 class ManagementController extends Controller
 {
     public function soaGeneration()
@@ -38,5 +38,13 @@ class ManagementController extends Controller
     {
         // return Account::whereDay('start_date', 23)->get();
         return Account::whereDay('start_date', \Carbon\Carbon::now()->addDays(10)->day)->get();
+    }
+
+
+
+    public function generateSOA(Account $account)
+    {
+    return Pdf::loadView('soa.pdf', [
+        'account' => $account->load('customer', 'transactions')])->stream("SOA_Account_{$account->account_number}.pdf");
     }
 }
