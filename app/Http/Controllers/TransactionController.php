@@ -2,13 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use App\Mail\TransactionOfAccount;
 use App\Models\Transaction;
 use App\Models\Account;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Mail;
 
 class TransactionController extends Controller
 {
@@ -33,7 +31,7 @@ class TransactionController extends Controller
     /**
      * Store a newly created transaction in storage.
      */
-   public function store(Request $request)
+    public function store(Request $request)
 {
     $validated = $request->validate([
         'account_id' => 'required|exists:accounts,id',
@@ -77,13 +75,7 @@ class TransactionController extends Controller
         return $transaction;
     });
 
-
-    if ($request->has('send_email')) {
-        $transaction->load('account.customer');
-
-        Mail::to($transaction->account->customer->email)
-            ->queue(new TransactionOfAccount($transaction));
-    }
+    // Email is now handled by TransactionObserver
 
     return redirect()->route('transactions.index')
         ->with('success', 'Transaction created successfully.');
@@ -153,19 +145,5 @@ class TransactionController extends Controller
     /**
      * Send transaction email manually
      */
-    public function sendTransaction(Request $request)
-    {
-        $request->validate([
-            'transaction_id' => 'required|exists:transactions,id',
-        ]);
-
-        $transaction = Transaction::with('account.customer')
-            ->findOrFail($request->transaction_id);
-
-        Mail::to($transaction->account->customer->email)
-            ->send(new TransactionOfAccount($transaction->account));
-
-        return redirect()->back()
-            ->with('success', 'Transaction email sent successfully.');
-    }
+   
 }
